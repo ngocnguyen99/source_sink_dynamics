@@ -1,0 +1,423 @@
+---
+title: "Fig.1 code"
+author: "Ngoc Nguyen"
+date: "2025-10-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load libraries
+library(ggplot2)
+library(MASS) 
+library(reshape2) 
+library(ggrepel)
+library(reshape)
+library(reshape2)
+library(tidyverse)
+library(dbplyr)
+library(dplyr)
+library(foreach)
+library(doParallel)
+library(purrr)
+library(broom)
+library(scales)
+library(gghalves)
+library(ggplot2)
+library(rnaturalearth)
+library(sf)
+library(terra)    
+library(tidyr)      
+library(patchwork)
+
+#Function to scale variables to 0-1 range
+scale_01 <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+}
+
+#Function to calculate the correlation of detrended x and y variables
+detrend_linear <- function(a1, a2) {
+  length_array <- length(a1)
+  index <- 1:length_array
+  
+  df_lm <- data.frame(a1, a2, index)
+  df_lm <- na.omit(df_lm)
+  
+  lm_a1 <- lm(a1 ~ index, df_lm)
+  lm_a2 <- lm(a2 ~ index, df_lm)
+
+  a1_fit <- predict(lm_a1)
+  a2_fit <- predict(lm_a2)
+  a1_detrend <- a1 - a1_fit
+  a2_detrend <- a2 - a2_fit
+
+  cor_df <- cor.test(a1_detrend, a2_detrend, method = "pearson")    
+  r_detrend <- cor_df$estimate
+  p_detrend <- cor_df$p.value
+  
+  p_linear_a1 <- summary(lm_a1)$coefficients[2,4]
+  p_linear_a2 <- summary(lm_a2)$coefficients[2,4]
+    
+  return(c(r_detrend, p_detrend, p_linear_a1, p_linear_a2))
+}
+
+#Function to calculate the correlation of x and y variables
+linear <- function(df) {
+  cor_df <- cor.test(df$gpp, df$cWood, method = "pearson")    
+  r <- cor_df$estimate
+  p <- cor_df$p.value
+    
+  return(c(r, p))
+}
+
+```
+
+
+#Calculate correlation of detrended delta cWood-GPP from TRENDY models (temporal and spatial matched with observational references published in Cabon et al. (2022))
+```{r}
+#Open datasets from Cabon et al. to extract the year range of data from each site
+year_info <- "/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/data/cabon/Cabonetal_site_info.csv"
+df_info <- read.csv(year_info)
+df_info$SITE_ID <- df_info$Site
+df_info <- subset(df_info, On.site.RW == TRUE) #df_info contains Start and End date of measurements
+
+#create a list of model name and scenario to run the loop
+model_name_list <- c("CLASSIC", "CLASSIC-N", "CABLE-POP", "CLM5.0", "ISBA-CTRIP", "LPX-Bern", "ORCHIDEE", "ORCHIDEEv3")
+var_name = "cWood"
+scenario = "S2"
+
+for( i in 1:length(model_name_list)) {
+  #Open cWood and GPP annual yearly mean for 30 locations in each model
+  path1 <- paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", model_name_list[i], "/gpp_", scenario, "_31_site_weighted_yearly_mean.csv", sep = "")
+  path2 <- paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/",  model_name_list[i], "/", var_name, "_", scenario, "_31_site_weighted_yearly_mean.csv", sep = "")
+  
+  #Open the list of coordinates of tower-overlapping grid cells for each model
+  coord_path <- paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", model_name_list[i], "/", model_name_list[i], "_site_info.csv", sep = "")
+    
+  df_gpp <- read.csv(path1)
+  df_var <- read.csv(path2)
+  df_coord <- read.csv(coord_path)
+  
+    if(model_name == "CLM5.0") {
+    df_gpp_sub <- df_gpp %>% filter(!is.na(gpp) & year < 2020)
+    df_var_sub <- df_var %>% filter(!is.na(.data[[var_name]])  & .data[[var_name]] != 0 & year < 2020)
+  } else {
+    #Filter for (1) no NA gpp, cWood, (2) no zero cWood
+    df_gpp_sub <- df_gpp %>% filter(!is.na(gpp))
+    df_var_sub <- df_var %>% filter(!is.na(.data[[var_name]])  & .data[[var_name]] != 0)
+  }
+  
+
+  # Merge GPP and cWood datasets and rescaling the variables
+  df_merge <- inner_join(df_gpp_sub, df_var_sub, by = c("year", "lat", "lon"))
+  
+  df_merge <- df_merge %>%
+      arrange(lat, lon, year) %>% 
+      group_by(lat, lon) %>%
+      mutate(biomass_increment = .data[["cWood"]] - lag(.data[["cWood"]]),) %>%
+      ungroup()
+  
+  df_merge <- full_join(df_merge, df_coord, by = c("lat", "lon")) #Only select the coordinates satisfied the criteria mentioned above to make sure that all pixels selected do not have influence of noises, disturbances, etc.
+  df_merge <- full_join(df_merge, df_info[, c("Start", "End", "SITE_ID")], by = c("SITE_ID")) #only select the years whose measurement is available
+  
+  model_stats <- df_merge %>% 
+    group_by(SITE_ID) %>%
+    filter(year >= Start & year <= End) %>% 
+    ungroup() %>%
+    filter(
+      !is.na(cWood),
+      cWood != 0,
+      !is.na(gpp)
+    ) %>%
+    group_by(lat, lon, SITE_ID) %>%
+    summarise(
+      n = n(),
+      r_detrend_delta = if (n > 3) detrend_linear(biomass_increment, gpp)[1] else NA,
+      p_detrend_delta = if (n > 3) detrend_linear(biomass_increment, gpp)[2] else NA,
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(r_detrend_delta)) 
+  
+  #create path to save the dataset
+  path_save <- paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/datasets/",  model_name_list[i], "_", "detrended_r_normal_delta_31_gpp_TRENDYv10_temporalMatch_not_scale", scenario, ".csv", sep = "")
+  write.csv(model_stats, path_save)
+}
+
+```
+
+
+#Extract correlation obtained from Cabon et al. for 31 site locations
+```{r}
+#Read the ring width and gpp annual files
+df_rw <- read.csv("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/data/cabon/rw_onsite.csv")
+df_gpp <- read.csv("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/data/cabon/flux_onsite.csv")
+#mSelect only for data with QC > 0.7 and aggregate GPP by year and site categories
+df_gpp_year <- aggregate(GPP_dtrd ~ Year + Site, data = subset(df_gpp, QC > 0.7), FUN = mean)
+#combine RW and GPP datasets
+merge_flux_rw <- list(df_rw, df_gpp_year) %>% reduce(full_join, by = c("Year", "Site"))
+#get rid of NA values
+merge_flux_rw <- na.omit(merge_flux_rw)
+#loop through all sites to extract the correlation and p-value between detrended RW and GPP
+site_name <- unique(merge_flux_rw$IDcrn)
+site_name_sel <- c()
+r_list <- c()
+p_list <- c()
+
+r_list_dtrd <- c()
+p_list_dtrd <- c()
+
+for(i in site_name) {
+  tryCatch({
+  df_sub <- subset(merge_flux_rw, IDcrn == i)
+  
+  r_corr_dtrd <- cor.test(df_sub$GPP_dtrd, df_sub$RWI_dtrd, method = "pearson")$estimate
+  p_value_dtrd <- cor.test(df_sub$GPP_dtrd, df_sub$RWI_dtrd, method = "pearson")$p.value
+
+  r_list_dtrd <- append(r_list_dtrd, r_corr_dtrd)
+  p_list_dtrd <- append(p_list_dtrd, p_value_dtrd)
+  
+  site_name_sel <- append(site_name_sel, i)
+  }, error = function(err) { })
+}
+
+#df_stat contains correlation for both detrended and non-detrended values
+df_stat <- data.frame(site_name_sel, r_list_dtrd, p_list_dtrd)
+df_stat$SITE_ID <- substr(df_stat$site_name_sel, 1,6)
+df_stat <- df_stat %>% group_by(SITE_ID) %>% summarise(across(everything(), mean, na.rm = TRUE))
+
+```
+
+
+#only use lat lon without < -10 cWood, zero cWood, NA GPP and cWood
+```{r}
+model_name_list = c( "CLM5.0", "ISBA-CTRIP", "ORCHIDEE", "ORCHIDEEv3", "CLASSIC-N", "CLASSIC", "CABLE-POP", "LPX-Bern")
+
+for(i in model_name_list) {
+#Fluxes
+gpp_df_S0 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/gpp_S0_31_site_weighted_yearly_mean.csv", sep = ""))
+cWood_df_S0 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/cWood_S0_31_site_weighted_yearly_mean.csv", sep = ""))
+
+gpp_df_S1 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/gpp_S1_31_site_weighted_yearly_mean.csv", sep = ""))
+cWood_df_S1 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/cWood_S1_31_site_weighted_yearly_mean.csv", sep = ""))
+
+gpp_df_S2 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/gpp_S2_31_site_weighted_yearly_mean.csv", sep = ""))
+cWood_df_S2 <- read.csv(paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/TRENDYv10/31_site_weighted/", i, "/cWood_S2_31_site_weighted_yearly_mean.csv", sep = ""))
+
+year_chosen = 1950
+gpp_df_sub_S0 <- subset(gpp_df_S0, !is.na(gpp) & year > year_chosen)
+cWood_df_sub_S0 <- subset(cWood_df_S0, !is.na(cWood) & year > year_chosen)
+
+gpp_df_sub_S1 <- subset(gpp_df_S1, !is.na(gpp) & year > year_chosen)
+cWood_df_sub_S1 <- subset(cWood_df_S1, !is.na(cWood) & year > year_chosen)
+
+gpp_df_sub_S2 <- subset(gpp_df_S2, !is.na(gpp) & year > year_chosen)
+cWood_df_sub_S2 <- subset(cWood_df_S2, !is.na(cWood) & year > year_chosen)
+
+cWood_df_increment_S0 <- cWood_df_sub_S0 %>%
+      arrange(lat, lon, year) %>% 
+      group_by(lat, lon) %>%
+      mutate(
+            cWood_increment_S0 = (.data[["cWood"]] - lag(.data[["cWood"]]))/60/60/24/365,
+            ) %>%
+      ungroup()
+
+cWood_df_increment_S1 <- cWood_df_sub_S1 %>%
+      arrange(lat, lon, year) %>% 
+      group_by(lat, lon) %>%
+      mutate(
+            cWood_increment_S1 = (.data[["cWood"]] - lag(.data[["cWood"]]))/60/60/24/365,
+            ) %>%
+      ungroup()
+
+cWood_df_increment_S2 <- cWood_df_sub_S2 %>%
+      arrange(lat, lon, year) %>% 
+      group_by(lat, lon) %>%
+      mutate(
+            cWood_increment_S2 = (.data[["cWood"]] - lag(.data[["cWood"]]))/60/60/24/365,
+            ) %>%
+      ungroup()
+
+merge_flux_S0 <- list(gpp_df_sub_S0, cWood_df_increment_S0) %>% 
+                  reduce(full_join, by = c("year", "lat", "lon"))
+merge_flux_S1 <- list(gpp_df_sub_S1, cWood_df_increment_S1) %>% 
+                  reduce(full_join, by = c("year", "lat", "lon"))
+merge_flux_S2 <- list(gpp_df_sub_S2, cWood_df_increment_S2) %>% 
+                  reduce(full_join, by = c("year", "lat", "lon"))
+
+merge_flux_sub_S0 <- subset(merge_flux_S0, !is.na(gpp) & !is.na(cWood_increment_S0) & cWood != 0)
+merge_flux_sub_S1 <- subset(merge_flux_S1, !is.na(gpp) & !is.na(cWood_increment_S1) & cWood != 0)
+merge_flux_sub_S2 <- subset(merge_flux_S2, !is.na(gpp) & !is.na(cWood_increment_S2) & cWood != 0)
+
+
+merge_flux_sub_S0$cW_incre_gpp_ratio_S0 <- merge_flux_sub_S0$cWood_increment_S0/merge_flux_sub_S0$gpp*100
+merge_flux_sub_S1$cW_incre_gpp_ratio_S1 <- merge_flux_sub_S1$cWood_increment_S1/merge_flux_sub_S1$gpp*100
+merge_flux_sub_S2$cW_incre_gpp_ratio_S2 <- merge_flux_sub_S2$cWood_increment_S2/merge_flux_sub_S2$gpp*100
+
+#extract the location where ratio is < -20
+df_sub_S0 <- subset(merge_flux_sub_S0, cW_incre_gpp_ratio_S0 < -10)
+df_sub_S1 <- subset(merge_flux_sub_S1, cW_incre_gpp_ratio_S1 < -10)
+df_sub_S2 <- subset(merge_flux_sub_S2, cW_incre_gpp_ratio_S2 < -10)
+
+problem_locations <- unique(
+  rbind(
+    df_sub_S0[, c("lat", "lon")],
+    df_sub_S1[, c("lat", "lon")],
+    df_sub_S2[, c("lat", "lon")]
+  )
+)
+
+merge_flux_sub_S2 <- merge_flux_sub_S2 %>% anti_join(problem_locations, by = c("lat", "lon"))
+
+merge_flux_sub_S2_sub <- merge_flux_sub_S2
+merge_flux_sub_S2_sub$model <- i
+lat_lon_list <- merge_flux_sub_S2_sub %>%
+  distinct(lat, lon) 
+
+#save the datasets with lat and longitude unique
+path_save_coord = paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/datasets/",  i, "_", "coord_n_sample_TRENDYv10", ".csv", sep = "")
+write.csv(lat_lon_list[, c("lat", "lon")], path_save_coord)
+}
+
+
+```
+
+
+#reproduce cabon method with trendy dataset to calculate detrended and non detrended correlation
+```{r}
+model_name_list <- c("ISBA-CTRIP", "CABLE-POP", "CLM5.0", "LPX-Bern", "ORCHIDEE", "ORCHIDEEv3", "CLASSIC-N",  "CLASSIC")
+scenario <- c("S0", "S1", "S2")
+df_list_detrend <- list()
+sample_num_list <- c()
+for (i in 1: length(model_name_list)) {
+  for (j in 1: length(scenario)) {
+    path <- paste("/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/datasets/",  model_name_list[i], "_", "detrended_r_normal_delta_31_gpp_TRENDYv10_temporalMatch_not_scale", scenario[j], ".csv", sep = "")
+    df <- read.csv(path)
+    sample_num <- length(unique(df$SITE_ID))
+    df$model <- model_name_list[i]
+    df$scenario <- scenario[j]
+    num <- 3*(i - 1) + j
+    df_list_detrend[[num]]<- df
+    sample_num_list <- append(sample_num_list, sample_num)
+  }
+}
+
+
+```
+
+```{r}
+combined_df_detrend <- bind_rows(df_list_detrend)
+plots <- list()
+
+for(i in 1:length(model_name_list)) {
+
+  data_sub <- subset(combined_df_detrend, model == model_name_list[i])
+  
+  df2 <- subset(df_stat, SITE_ID %in% unique(data_sub$SITE_ID)) %>%
+    mutate(scenario = "obs")
+  df2$r_detrend_delta <- df2$r_list_dtrd
+  all_data <- bind_rows(data_sub, df2)
+  all_data$model <- model_name_list[i]
+  
+  p_vals <- c(
+    S0 = t.test(subset(all_data, scenario == "S0")$r_detrend_delta, subset(all_data, scenario == "obs")$r_list_dtrd)$p.value,
+    S1 = t.test(subset(all_data, scenario == "S1")$r_detrend_delta, subset(all_data, scenario == "obs")$r_list_dtrd)$p.value,
+    S2 = t.test(subset(all_data, scenario == "S2")$r_detrend_delta, subset(all_data, scenario == "obs")$r_list_dtrd)$p.value
+  )
+  
+  signif_df <- data.frame(
+  scenario = c("obs", "S0", "S1", "S2"),
+  p_value = c(NA, p_vals),
+  asterisk = c("", ifelse(p_vals < 0.05, "*", ""))
+)
+  
+  signif <- signif_df %>%
+    left_join(
+      all_data %>%
+        group_by(scenario) %>%
+        summarise(y_pos = 0.05 + max(r_detrend_delta, na.rm = TRUE)),
+      by = "scenario"
+    )
+  
+  plots[[i]] <- 
+   ggplot() + 
+  geom_boxplot(
+    data = all_data, 
+    aes(x = scenario, y = r_detrend_delta), 
+    size = 0.3, alpha = 0.5, outlier.shape = NA, color = "#3c5488", fill = "#3c5488"
+  ) + geom_jitter(data = all_data, 
+    aes(x = scenario, y = r_detrend_delta), 
+    size = 0.3, alpha = 0.5, width = 0.15, color = "#3c5488", fill = "#3c5488") + 
+  geom_text(
+    data = signif,
+    aes(x = scenario, y = y_pos, label = asterisk),
+    color = "black",
+    size = 5
+  ) +
+  theme_bw() + 
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 15),
+    axis.text.x = element_text(size = 15),
+    axis.title.y = element_text(size = 15),
+    axis.title.x = element_text(size = 15),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ylim(-1, 1.2) +
+  annotate(
+    "text",
+    x = 0.6,   
+    y = -0.8,  
+    label = paste(model_name_list[i], " (n = ", sample_num_list[i*3], ")", sep = ""),
+    hjust = 0,
+    vjust = 1,
+    size = 3
+  ) +
+  ylab(expression(r[Delta * italic(cWood)* "," ~italic(GPP)]))
+       
+} 
+
+
+#save all at once
+save_path_boxplot = "/Users/ngocnguyen/Library/CloudStorage/Box-Box/Projects/biomass_paper/results/figures/all_delta_obs_r_gpp_TRENDYv10_temporalMatch_boxplot_31_non_scale.png"
+
+png(save_path_boxplot,  width     = 8,
+  height    = 4.25,
+  units     = "in",
+  res       = 1200,
+  pointsize = 4)
+
+#annotate for graph 1 and 5
+for (i in 1:8) {
+  if (i %% 4 != 1) {
+    plots[[i]] <- plots[[i]] + theme(axis.title.y = element_blank(), axis.text.y = element_blank())
+  }
+  if(i <= 4) {
+    plots[[i]] <- plots[[i]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+  }
+}
+
+combined_plot <- (plots[[1]] + annotate("text",x = 0.7, y = 1.15, label = "a",size = 5) | 
+                  plots[[2]]  + annotate("text",x = 0.7, y = 1.15, label = "b",size = 5) | 
+                  plots[[3]]  + annotate("text",x = 0.7, y = 1.15, label = "c",size = 5) | 
+                  plots[[4]]  + annotate("text",x = 0.7, y = 1.15, label = "d",size = 5)) /
+                 (plots[[5]]  + annotate("text",x = 0.7, y = 1.15, label = "e",size = 5) | 
+                  plots[[6]]  + annotate("text",x = 0.7, y = 1.15, label = "f",size = 5) | 
+                  plots[[7]]  + annotate("text",x = 0.7, y = 1.15, label = "g",size = 5) | 
+                  plots[[8]] + annotate("text",x = 0.7, y = 1.15, label = "h",size = 5) )
+                
+print(combined_plot)
+
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
