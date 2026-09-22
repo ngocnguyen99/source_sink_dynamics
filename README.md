@@ -7,6 +7,9 @@ photosynthetic decoupling”** Nature Plants. https://www.nature.com/articles/s4
 # DATA AVAILABILITY
 * Eddy-covariance GPP and tree-ring width data are obtained from the compilation provided by Antoine Cabon et al., Cross-biome synthesis of source versus sink limits to tree growth. Science 376, 758-761 (2022). DOI:10.1126/science.abm4875, which compiles eddy-covariance GPP from FLUXNET2015 (https://fluxnet.org/data/fluxnet2015-dataset) and AmeriFlux datasets (https://ameriflux.lbl.gov) with on-site Ring Width data observations at 31 sites. TRENDYv10 datasets are obtained from the Global Carbon Budget (https://mdosullivan.github.io/GCB/). All data used in this study are publicly available.
 
+# SOFTWARE VERSION
+* The provided code is run in Jupyter Notebook version 6.4.8 (Python 3.9.7) and Rstudio version 2024.12.1+563
+
 # AUTHORSHIP
 * Ngoc B. Nguyen [1], Miao Zhang [1],[3],[4], Trevor F. Keenan [1],[2] (*corresponding authors: ngoc.nguyen@berkeley.edu; trevorkeenan@berkeley.edu)
 * [1] Department of Environmental Science, Policy, and Management, University of California, Berkeley, CA, USA
