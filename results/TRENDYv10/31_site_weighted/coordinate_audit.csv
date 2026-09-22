@@ -1,0 +1,16 @@
+model,scenario,variable,lat_min,lat_max,lat_order,lon_min,lon_max,lon_order,convert_longitude
+LPJ-GUESS,S0,cLeaf,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S0,cRoot,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S0,cWood,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S0,gpp,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S0,ra,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S1,cLeaf,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S1,cRoot,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S1,cWood,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S1,gpp,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S1,ra,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S2,cLeaf,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S2,cRoot,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S2,cWood,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S2,gpp,-89.75,89.75,ascending,-179.75,179.75,ascending,False
+LPJ-GUESS,S2,ra,-89.75,89.75,ascending,-179.75,179.75,ascending,False

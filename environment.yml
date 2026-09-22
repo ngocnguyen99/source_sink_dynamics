@@ -1,0 +1,12 @@
+name: source-sink-dynamics
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - jupyterlab
+  - ipykernel
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - joblib>=0.14
